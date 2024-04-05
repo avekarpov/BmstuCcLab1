@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <list>
 #include <vector>
@@ -291,10 +292,18 @@ private:
             {
                 case '(':
                 {
-                    fsm &= parseSubregex(lexer).addBrackets();
+                    if (not fsm.empty())
+                    {
+                        lexer.rollback();
+                        fsm &= parseSubregex(lexer);
+                    }
+                    else
+                    {
+                        fsm = parseSubregex(lexer).addBrackets();
 
-                    assert(lexer.get() == ')');
-                    lexer.next();
+                        assert(lexer.get() == ')');
+                        lexer.next();
+                    }
 
                     break;
                 }
@@ -316,7 +325,6 @@ private:
                 case '*':
                 {
                     fsm.addRepeat();
-                    fsm &= parseSubregex(lexer);
 
                     break;
                 }
@@ -324,20 +332,25 @@ private:
                 case '?':
                 {
                     fsm.addOptional();
-                    fsm &= parseSubregex(lexer);
 
                     break;
                 }
 
                 default:
                 {
-                    fsm &= Fsm { term };
+                    if (not fsm.empty())
+                    {
+                        lexer.rollback();
+                        fsm &= parseSubregex(lexer);
+                    }
+                    else
+                    {
+                        fsm = Fsm { term };
+                    }
 
                     break;
                 }
             }
-
-            // std::cout << "after " << term << "\n" << fsm << std::endl;
         }
 
         return fsm;
@@ -347,7 +360,11 @@ private:
 
 int main(int argc, char *argv[])
 {
-    std::string input = "a?(b|c)*k";
+    std::string input = "z*|(qw)?";
+    // std::string input = "ab*cz*";
+    // std::string input = "z(q)*";
+    // std::string input = "(q)*";
+    // std::string input = "a|(b)?";
     // std::cin >> input;
 
     RegexParser parser;
