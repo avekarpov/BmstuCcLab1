@@ -5,6 +5,11 @@
 #include <vector>
 #include <cassert>
 
+using State = size_t;
+using StateTranslations = std::list<std::pair<std::string, size_t>>;
+using FsmTranslations = std::vector<StateTranslations>;
+static const std::string Eps { "eps" };
+
 class Fsm
 {
 public:
@@ -13,12 +18,17 @@ public:
     Fsm (char term)
     {
         _translations.emplace_back();
-        _translations.back().emplace_back(std::string { term }, size());
+        _translations.back().emplace_back(std::string { term }, endState());
     }
 
-    const std::list<std::pair<std::string, size_t>> &operator[](const size_t index) const
+    const StateTranslations &operator[](const State index) const
     {
         return _translations[index];
+    }
+
+    State endState() const
+    {
+        return _translations.size();
     }
 
     size_t size() const
@@ -45,14 +55,14 @@ public:
         
         Fsm fsm;
 
-        for (size_t state = 0; state < _translations.size(); ++state)
+        for (size_t state = 0; state < size(); ++state)
         {
             fsm._translations.emplace_back(_translations[state]);
         }
         fsm._translations.emplace_back(); // For exit from this fsm
 
-        const auto shift_other_state = fsm._translations.size();
-        for (size_t state = 0; state < other._translations.size(); ++state)
+        const auto shift_other_state = fsm.size();
+        for (size_t state = 0; state < other.size(); ++state)
         {
             fsm._translations.emplace_back(other[state]);
             for (auto &[_, new_state] : fsm._translations.back())
@@ -61,8 +71,8 @@ public:
             }
         }
 
-        fsm[0].emplace_back("eps", size() + 1); // Go to 2nd fsm
-        fsm[size()].emplace_back("eps", fsm.size()); // Go to exit from 1st fsm
+        fsm[0].emplace_back(Eps, endState() + 1); // Go to 2nd fsm
+        fsm[endState()].emplace_back(Eps, fsm.endState()); // Go to exit from 1st fsm
 
         return fsm;
     }
@@ -88,14 +98,14 @@ public:
 
         Fsm fsm;
 
-        for (size_t state = 0; state < _translations.size(); ++state)
+        for (size_t state = 0; state < size(); ++state)
         {
             fsm._translations.emplace_back(_translations[state]);
         }
         fsm._translations.emplace_back(); // For connect to other fsm
 
-        const auto shift_other_state = fsm._translations.size();
-        for (size_t state = 0; state < other._translations.size(); ++state)
+        const auto shift_other_state = fsm.size();
+        for (size_t state = 0; state < other.size(); ++state)
         {
             fsm._translations.emplace_back(other[state]);
             for (auto &[_, new_state] : fsm._translations.back())
@@ -104,7 +114,7 @@ public:
             }
         }
 
-        fsm[size()].emplace_back("eps", size() + 1); // Go to 2nd after 1st fsm
+        fsm[endState()].emplace_back(Eps, endState() + 1); // Go to 2nd after 1st fsm
 
         return fsm;
     }
@@ -119,52 +129,32 @@ public:
     Fsm &addBrackets()
     {
         shiftLeft(1);
-        _translations[0].emplace_back("eps", 1);
+        _translations[0].emplace_back(Eps, 1);
         shiftRight(1);
-        _translations[size() - 1].emplace_back("eps", size());
+        _translations[endState() - 1].emplace_back(Eps, endState());
 
         return *this;
     }
 
     Fsm &addRepeat()
     {
-        _translations.emplace_back();
-        _translations.back().emplace_back("eps", 0);
-        _translations.back().emplace_back("eps", _translations.size());
-
-        _translations.emplace_back();
-        for (size_t i = _translations.size() - 1; 0 < i; --i)
-        {
-            _translations[i] = std::move(_translations[i - 1]);
-            for (auto &[_, new_state] : _translations[i])
-            {
-                new_state += 1;
-            }
-        }
-    
-        _translations.front().emplace_back("eps", 1);
-        _translations.front().emplace_back("eps", _translations.size());
+        shiftRight(1);
+        _translations[endState() - 1].emplace_back(Eps, 0);
+        _translations[endState() - 1].emplace_back(Eps, endState());
+        shiftLeft(1);
+        _translations[0].emplace_back(Eps, 1);
+        _translations[0].emplace_back(Eps, endState());
 
         return *this;
     }
 
     Fsm &addOptional()
     {
-        _translations.emplace_back();
-        _translations.back().emplace_back("eps", _translations.size());
-
-        _translations.emplace_back();
-        for (size_t i = _translations.size() - 1; 0 < i; --i)
-        {
-            _translations[i] = std::move(_translations[i - 1]);
-            for (auto &[_, new_state] : _translations[i])
-            {
-                new_state += 1;
-            }
-        }
-    
-        _translations.front().emplace_back("eps", 1);
-        _translations.front().emplace_back("eps", _translations.size());
+        shiftRight(1);
+        _translations[endState() - 1].emplace_back(Eps, endState());
+        shiftLeft(1);
+        _translations[0].emplace_back(Eps, 1);
+        _translations[0].emplace_back(Eps, endState());
 
         return *this;
     }
@@ -174,7 +164,7 @@ public:
         for (size_t i = 0; i < fsm.size(); ++i)
         {
             os << i << ": [";
-            for (const auto &[key, new_state] : fsm._translations[i])
+            for (const auto &[key, new_state] : fsm[i])
             {
                 os << key << ": " << new_state << ", ";
             }
@@ -185,7 +175,7 @@ public:
     }
 
 private:
-    std::list<std::pair<std::string, size_t>> &operator[](const size_t index)
+    StateTranslations &operator[](const size_t index)
     {
         return _translations[index];
     }
@@ -215,7 +205,7 @@ private:
     }
 
 private:
-    std::vector<std::list<std::pair<std::string, size_t>>> _translations;
+    FsmTranslations _translations;
 };
 
 class RegexParser
@@ -360,7 +350,9 @@ private:
 
 int main(int argc, char *argv[])
 {
-    std::string input = "z*|(qw)?";
+    std::string input = "(a|b)*abb";
+    // std::string input = "z*|(qw)?";
+    // std::string input = "z*";
     // std::string input = "ab*cz*";
     // std::string input = "z(q)*";
     // std::string input = "(q)*";
