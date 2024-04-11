@@ -16,11 +16,43 @@ static constexpr Term Eps { '\0' };
 using StateTranslations = std::list<std::pair<Term, size_t>>;
 using FsmTranslations = std::vector<StateTranslations>;
 
-class Fsm
+class FsmBase
 {
-private:
-    friend class FsmDeterminizer;
+public:
+    FsmBase() = default;
 
+    FsmBase(std::set<Term> terms, FsmTranslations transactions)
+    : _terms { std::move(terms) }
+    , _translations { std::move(transactions) }
+    {}
+
+    const std::set<Term> &terms() const
+    {
+        return _terms;
+    }
+
+    const StateTranslations &at(const State index) const
+    {
+        if (size() <= index)
+        {
+            throw std::runtime_error { "out of state" };
+        }
+
+        return _translations[index];
+    }
+
+    size_t size() const
+    {
+        return _translations.size();
+    }
+
+protected:
+    std::set<Term> _terms;
+    FsmTranslations _translations;
+};
+
+class Fsm : public FsmBase
+{
 public:
     Fsm () = default;
     
@@ -31,31 +63,17 @@ public:
         _translations.back().emplace_back(term, endState());
     }
 
-    const std::set<Term> &terms() const
-    {
-        return _terms;
-    }
-
     const StateTranslations &at(const State index) const
     {
         if (endState() == index)
         {
             throw std::runtime_error { "access meta end state"};
         }
-        if (size() < index)
-        {
-            throw std::runtime_error { "out of state"};
-        }
 
-        return _translations[index];
+        return FsmBase::at(index);
     }
 
     State endState() const
-    {
-        return _translations.size();
-    }
-
-    size_t size() const
     {
         return _translations.size();
     }
@@ -208,6 +226,7 @@ public:
             }
             os << "]\n";
         }
+        os << "end state: " << fsm.endState();
 
         return os;
     }
@@ -241,10 +260,43 @@ private:
             _translations.emplace_back();
         }
     }
+};
+
+class DFsm : public FsmBase
+{
+public:
+    DFsm(std::set<Term> terms, FsmTranslations transactions, std::set<State> end_states)
+    : FsmBase { std::move(terms), std::move(transactions) }
+    , _end_states { std::move(end_states) }
+    {}
+
+    const std::set<State> endStates() const
+    {
+        return _end_states;
+    }
+
+    friend std::ostream &operator<<(std::ostream& os, const DFsm &dfsm)
+    {
+        for (size_t i = 0; i < dfsm.size(); ++i)
+        {
+            os << i << ": [";
+            for (const auto &[key, new_state] : dfsm.at(i))
+            {
+                os << key << ": " << new_state << ", ";
+            }
+            os << "]\n";
+        }
+        os << "end states: ";
+        for (const auto end_state : dfsm.endStates())
+        {
+            os << end_state << ", ";
+        }
+
+        return os;
+    }
 
 private:
-    std::set<Term> _terms;
-    FsmTranslations _translations;
+    std::set<State> _end_states;
 };
 
 class RegexParser
@@ -390,7 +442,7 @@ private:
 class FsmDeterminizer
 {
 public:
-    Fsm determine(const Fsm &fsm)
+    DFsm determine(const Fsm &fsm)
     {
         std::map<std::set<State>, State> mapping;
         FsmTranslations transactions;
@@ -418,7 +470,7 @@ public:
                 
                 if (mapping.find(new_state) == mapping.end())
                 {
-                    mapping.emplace(new_state, transactions.size());
+                    mapping[new_state] = transactions.size();
                     transactions.emplace_back();
                     queue.insert(new_state);
                 }
@@ -427,10 +479,16 @@ public:
             }
         }
 
-        Fsm new_fsm;
-        new_fsm._translations = std::move(transactions);
+        std::set<State> end_states;
+        for (const auto &[fsm_states, dfsm_state] : mapping)
+        {
+            if (fsm_states.find(fsm.endState()) != fsm_states.end())
+            {
+                end_states.insert(dfsm_state);
+            }
+        }
 
-        return new_fsm;
+        return DFsm { fsm.terms(), std::move(transactions), std::move(end_states) };
     }
 
 private:
@@ -515,11 +573,11 @@ int main(int argc, char *argv[])
 
     RegexParser parser;
     const auto nfsm = parser.parseToFsm(input);
-    std::cout << nfsm << std::endl;
+    std::cout << nfsm << "\n" << std::endl;
 
     FsmDeterminizer determinizer;
     const auto dfsm = determinizer.determine(nfsm);
-    std::cout << dfsm << std::endl;
+    std::cout << dfsm << "\n" << std::endl;
 
     return EXIT_SUCCESS;
 }
