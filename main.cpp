@@ -4,25 +4,49 @@
 #include <list>
 #include <vector>
 #include <cassert>
+#include <queue>
+#include <set>
+#include <map>
 
 using State = size_t;
-using StateTranslations = std::list<std::pair<std::string, size_t>>;
+
+using Term = char;
+static constexpr Term Eps { '\0' };
+
+using StateTranslations = std::list<std::pair<Term, size_t>>;
 using FsmTranslations = std::vector<StateTranslations>;
-static const std::string Eps { "eps" };
 
 class Fsm
 {
+private:
+    friend class FsmDeterminizer;
+
 public:
     Fsm () = default;
     
-    Fsm (char term)
+    Fsm (Term term)
     {
+        _terms.emplace(term);
         _translations.emplace_back();
-        _translations.back().emplace_back(std::string { term }, endState());
+        _translations.back().emplace_back(term, endState());
     }
 
-    const StateTranslations &operator[](const State index) const
+    const std::set<Term> &terms() const
     {
+        return _terms;
+    }
+
+    const StateTranslations &at(const State index) const
+    {
+        if (endState() == index)
+        {
+            throw std::runtime_error { "access meta end state"};
+        }
+        if (size() < index)
+        {
+            throw std::runtime_error { "out of state"};
+        }
+
         return _translations[index];
     }
 
@@ -55,6 +79,9 @@ public:
         
         Fsm fsm;
 
+        fsm._terms.insert(_terms.begin(), _terms.end());
+        fsm._terms.insert(other._terms.begin(), other._terms.end());
+
         for (size_t state = 0; state < size(); ++state)
         {
             fsm._translations.emplace_back(_translations[state]);
@@ -64,7 +91,7 @@ public:
         const auto shift_other_state = fsm.size();
         for (size_t state = 0; state < other.size(); ++state)
         {
-            fsm._translations.emplace_back(other[state]);
+            fsm._translations.emplace_back(other.at(state));
             for (auto &[_, new_state] : fsm._translations.back())
             {
                 new_state += shift_other_state;
@@ -98,6 +125,9 @@ public:
 
         Fsm fsm;
 
+        fsm._terms.insert(_terms.begin(), _terms.end());
+        fsm._terms.insert(other._terms.begin(), other._terms.end());
+
         for (size_t state = 0; state < size(); ++state)
         {
             fsm._translations.emplace_back(_translations[state]);
@@ -107,7 +137,7 @@ public:
         const auto shift_other_state = fsm.size();
         for (size_t state = 0; state < other.size(); ++state)
         {
-            fsm._translations.emplace_back(other[state]);
+            fsm._translations.emplace_back(other.at(state));
             for (auto &[_, new_state] : fsm._translations.back())
             {
                 new_state += shift_other_state;
@@ -164,9 +194,17 @@ public:
         for (size_t i = 0; i < fsm.size(); ++i)
         {
             os << i << ": [";
-            for (const auto &[key, new_state] : fsm[i])
+            for (const auto &[key, new_state] : fsm.at(i))
             {
-                os << key << ": " << new_state << ", ";
+                if (key == Eps)
+                {
+                    os << "ε";
+                }
+                else
+                {
+                    os << key;
+                }
+                os << ": " << new_state << ", ";
             }
             os << "]\n";
         }
@@ -205,6 +243,7 @@ private:
     }
 
 private:
+    std::set<Term> _terms;
     FsmTranslations _translations;
 };
 
@@ -261,9 +300,9 @@ private:
     };
 
 public:
-    Fsm parseToFsm(std::string string)
+    Fsm parseToFsm(std::string regex)
     {
-        Lexer lexer { std::move(string) };
+        Lexer lexer { std::move(regex) };
 
         return parseSubregex(lexer);
     }
@@ -348,11 +387,126 @@ private:
 
 };
 
+class FsmDeterminizer
+{
+public:
+    Fsm determine(const Fsm &fsm)
+    {
+        std::map<std::set<State>, State> mapping;
+        FsmTranslations transactions;
+        std::set<std::set<State>> queue;
+
+        const auto start_state = epsClosure(fsm, 0);
+
+        mapping[start_state] = transactions.size();
+        transactions.emplace_back();
+        queue.insert(start_state);
+
+        while (not queue.empty())
+        {
+            const auto state = std::move(*queue.begin());
+            queue.erase(queue.begin());
+
+            for (const auto term : fsm.terms())
+            {
+                const auto new_state = epsClosure(fsm, move(fsm, state, term));
+
+                if (new_state.empty())
+                {
+                    continue;
+                }
+                
+                if (mapping.find(new_state) == mapping.end())
+                {
+                    mapping.emplace(new_state, transactions.size());
+                    transactions.emplace_back();
+                    queue.insert(new_state);
+                }
+
+                transactions[mapping[state]].emplace_back(term, mapping[new_state]);
+            }
+        }
+
+        Fsm new_fsm;
+        new_fsm._translations = std::move(transactions);
+
+        return new_fsm;
+    }
+
+private:
+    std::set<State> singleEpsClosure(const Fsm &fsm, const State input_state)
+    {
+        std::set<State> result;
+
+        if (input_state != fsm.endState())
+        {
+            for (const auto &[key, new_state] : fsm.at(input_state))
+            {
+                if (key == Eps)
+                {
+                    result.emplace(new_state);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    std::set<State> epsClosure(const Fsm &fsm, const std::set<State> &input_states)
+    {
+        std::set<State> result { input_states.begin(), input_states.end() };
+
+        for (const auto state : input_states)
+        {
+            const auto result_size_before = result.size();
+
+            auto new_states = singleEpsClosure(fsm, state);
+            result.insert(new_states.begin(), new_states.end());
+            
+            if (result_size_before < result.size())
+            {
+                new_states = epsClosure(fsm, new_states);
+                result.insert(new_states.begin(), new_states.end());
+            }
+        }
+
+        return result;
+    }
+
+    std::set<State> epsClosure(const Fsm &fsm, const State input_state)
+    {
+        return epsClosure(fsm, std::set<State> { input_state });
+    }
+
+    std::set<State> move(const Fsm &fsm, const std::set<State> &input_states, const Term term)
+    {
+        std::set<State> result;
+
+        for (auto state : input_states)
+        {
+            if (state == fsm.endState())
+            {
+                continue;
+            }
+
+            for (const auto &[key, new_state] : fsm.at(state))
+            {
+                if (key == term)
+                {
+                    result.insert(new_state);
+                }
+            }
+        }
+
+        return result;
+    }
+};
+
 int main(int argc, char *argv[])
 {
+    // std::string input = "b|a*";
     std::string input = "(a|b)*abb";
     // std::string input = "z*|(qw)?";
-    // std::string input = "z*";
     // std::string input = "ab*cz*";
     // std::string input = "z(q)*";
     // std::string input = "(q)*";
@@ -360,7 +514,12 @@ int main(int argc, char *argv[])
     // std::cin >> input;
 
     RegexParser parser;
-    std::cout << parser.parseToFsm(input) << std::endl;
+    const auto nfsm = parser.parseToFsm(input);
+    std::cout << nfsm << std::endl;
+
+    FsmDeterminizer determinizer;
+    const auto dfsm = determinizer.determine(nfsm);
+    std::cout << dfsm << std::endl;
 
     return EXIT_SUCCESS;
 }
