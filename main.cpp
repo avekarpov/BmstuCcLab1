@@ -54,28 +54,22 @@ protected:
 class Fsm : public FsmBase
 {
 public:
-    Fsm () = default;
+    Fsm ()
+    {
+        _translations.emplace_back();
+    }
     
     Fsm (Term term)
     {
         _terms.emplace(term);
         _translations.emplace_back();
-        _translations.back().emplace_back(term, endState());
-    }
-
-    const StateTranslations &at(const State index) const
-    {
-        if (endState() == index)
-        {
-            throw std::runtime_error { "access meta end state"};
-        }
-
-        return FsmBase::at(index);
+        _translations.emplace_back();
+        _translations.front().emplace_back(term, endState());
     }
 
     State endState() const
     {
-        return _translations.size();
+        return _translations.size() - 1;
     }
 
     bool empty() const
@@ -95,19 +89,12 @@ public:
             return *this;
         }
         
-        Fsm fsm;
+        Fsm fsm = *this;
 
-        fsm._terms.insert(_terms.begin(), _terms.end());
         fsm._terms.insert(other._terms.begin(), other._terms.end());
 
-        for (size_t state = 0; state < size(); ++state)
-        {
-            fsm._translations.emplace_back(_translations[state]);
-        }
-        fsm._translations.emplace_back(); // For exit from this fsm
-
         const auto shift_other_state = fsm.size();
-        for (size_t state = 0; state < other.size(); ++state)
+        for (State state = 0; state < other.size(); ++state)
         {
             fsm._translations.emplace_back(other.at(state));
             for (auto &[_, new_state] : fsm._translations.back())
@@ -141,16 +128,9 @@ public:
             return *this;
         }
 
-        Fsm fsm;
+        Fsm fsm = *this;
 
-        fsm._terms.insert(_terms.begin(), _terms.end());
         fsm._terms.insert(other._terms.begin(), other._terms.end());
-
-        for (size_t state = 0; state < size(); ++state)
-        {
-            fsm._translations.emplace_back(_translations[state]);
-        }
-        fsm._translations.emplace_back(); // For connect to other fsm
 
         const auto shift_other_state = fsm.size();
         for (size_t state = 0; state < other.size(); ++state)
@@ -373,7 +353,7 @@ private:
             {
                 case '(':
                 {
-                    if (not fsm.empty())
+                    if (not fsm.terms().empty())
                     {
                         lexer.rollback();
                         fsm &= parseSubregex(lexer);
@@ -419,7 +399,7 @@ private:
 
                 default:
                 {
-                    if (not fsm.empty())
+                    if (not fsm.terms().empty())
                     {
                         lexer.rollback();
                         fsm &= parseSubregex(lexer);
@@ -562,10 +542,10 @@ private:
 
 int main(int argc, char *argv[])
 {
-    // std::string input = "b|a*";
-    std::string input = "(a|b)*abb";
+    // std::string input = "b";
+    // std::string input = "(a|b)*abb";
     // std::string input = "z*|(qw)?";
-    // std::string input = "ab*cz*";
+    std::string input = "ab*cz*";
     // std::string input = "z(q)*";
     // std::string input = "(q)*";
     // std::string input = "a|(b)?";
