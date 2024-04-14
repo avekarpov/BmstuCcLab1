@@ -36,6 +36,11 @@ public:
         return _translations;
     }
 
+    bool empty() const
+    {
+        return _terms.empty();
+    }
+
     const StateTranslations &at(const State index) const
     {
         if (size() <= index)
@@ -75,11 +80,6 @@ public:
     State endState() const
     {
         return _translations.size() - 1;
-    }
-
-    bool empty() const
-    {
-        return _translations.empty();
     }
 
     Fsm operator|(const Fsm &other) const
@@ -275,13 +275,16 @@ public:
     DFsm(std::set<Term> terms, FsmTranslations translations, std::set<State> end_states)
     : FsmBase { std::move(terms), std::move(translations) }
     , _end_states { std::move(end_states) }
-    {
-        // addErrorState();
-    }
+    {}
 
     const std::set<State>& endStates() const
     {
         return _end_states;
+    }
+
+    bool isEndState(const State state) const
+    {
+        return _end_states.find(state) != _end_states.end();
     }
 
     friend std::ostream &operator<<(std::ostream& os, const DFsm &dfsm)
@@ -406,7 +409,7 @@ private:
             {
                 case '(':
                 {
-                    if (not fsm.terms().empty())
+                    if (not fsm.empty())
                     {
                         lexer.rollback();
                         fsm &= parseSubregex(lexer);
@@ -431,7 +434,7 @@ private:
 
                 case '|':
                 {
-                    if (fsm.terms().empty())
+                    if (fsm.empty())
                     {
                         lexer.rollback();
 
@@ -447,7 +450,7 @@ private:
 
                 case '*':
                 {
-                    if (fsm.terms().empty())
+                    if (fsm.empty())
                     {
                         lexer.rollback();
 
@@ -464,7 +467,7 @@ private:
 
                 case '?':
                 {
-                    if (fsm.terms().empty())
+                    if (fsm.empty())
                     {
                         lexer.rollback();
 
@@ -481,7 +484,7 @@ private:
 
                 default:
                 {
-                    if (not fsm.terms().empty() && not lexer.isEnd() && isSingle(lexer.get()))
+                    if (not fsm.empty() && not lexer.isEnd() && isSingle(lexer.get()))
                     {
                         lexer.rollback();
                         fsm &= parseSubregex(lexer);
@@ -544,7 +547,7 @@ public:
         std::set<State> end_states;
         for (const auto &[fsm_states, dfsm_state] : mapping)
         {
-            if (fsm_states.find(fsm.endState()) != fsm_states.end())
+            if (fsm_states.count(fsm.endState()) != 0)
             {
                 end_states.insert(dfsm_state);
             }
@@ -622,27 +625,6 @@ private:
     }
 };
 
-// TODO: remove
-void print(std::vector<std::vector<bool>> marked)
-{
-    std::cout << "  ";
-    for (State i = 0; i < marked.size(); ++i)
-    {
-        std::cout << i << " ";
-    }
-    std::cout << std::endl << std::endl;
-    for (State i = 0; i < marked.size(); ++i)
-    {
-        std::cout << i << " ";
-        for (const auto &item : marked[i])
-        {
-            std::cout << (item ? 'x' : ' ') << "|";
-        }
-        std::cout << std::endl;
-    }
-    std::cout << std::endl;
-}
-
 class DFsmMinimizer
 {
 public:
@@ -692,7 +674,7 @@ public:
 
             for (State j = i + 1; j < marked[i].size() - 1; ++j)
             {
-                if (isEndState(dfsm, i) != isEndState(dfsm, j))
+                if (dfsm.isEndState(i) != dfsm.isEndState(j))
                 {
                     marked[j][i] = marked[i][j] = true;
                     queue.emplace_back(i, j);
@@ -701,15 +683,13 @@ public:
         }
         for (State state = 0; state < dfsm.size(); ++state)
         {
-            if (true != isEndState(dfsm, state))
+            if (true != dfsm.isEndState(state))
             {
                 marked[state][dfsm.size()] = marked[dfsm.size()][state] =  true;
                 queue.emplace_back(dfsm.size(), state);
             }
         }
         marked[dfsm.size()][dfsm.size()] = false;
-
-        print(marked);
 
         while (not queue.empty())
         {
@@ -738,31 +718,21 @@ public:
             queue.pop_front();
         }
 
-        print(marked);
-
         for (State state = 0; state < dfsm.size(); ++state)
         {
             marked[state].pop_back();
         }
         marked.pop_back();
 
-        print(marked);
-
         std::vector<std::optional<State>> equal_states;
         equal_states.resize(dfsm.size(), std::nullopt);
         for (State i = 0; i < dfsm.size(); ++i)
         {
-            // if (reachable_states.find(i) == reachable_states.end())
-            // {
-            //     continue;
-            // }
-
             for (State j = i + 1; j < dfsm.size(); ++j)
             {
                 if (not marked[i][j])
                 {
                     equal_states[j] = i;
-                    std::cout << i << " eqaul to " << j << std::endl;
                 }
             }
         }
@@ -771,15 +741,9 @@ public:
         FsmTranslations translations;
         for (State state = 0; state < equal_states.size(); ++state)
         {
-            // if (reachable_states.find(state) == reachable_states.end())
-            // {
-            //     continue;
-            // }
-
             if (not equal_states[state].has_value())
             {
                 mapping[state] = translations.size();
-                std::cout << state << " mapped on " << mapping[state] << std::endl;
                 translations.emplace_back();
             }
         }
@@ -787,12 +751,12 @@ public:
         std::set<State> end_states;
         for (State state = 0; state < dfsm.size(); ++state)
         {
-            if (reachable_states.find(state) == reachable_states.end())
+            if (reachable_states.count(state) == 0)
             {
                 continue;
             }
 
-             if (not equal_states[state].has_value() && dfsm.endStates().find(state) != dfsm.endStates().end())
+            if (not equal_states[state].has_value() && dfsm.isEndState(state))
             {
                 end_states.insert(mapping[state]);
             }
@@ -810,15 +774,10 @@ public:
             }
         }
 
-        return DFsm { dfsm.terms(), std::move(translations), end_states };
+        return DFsm { dfsm.terms(), std::move(translations), std::move(end_states) };
     }
 
 private:
-    bool isEndState(const DFsm &dfsm, const State state)
-    {
-        return dfsm.endStates().find(state) != dfsm.endStates().end();
-    }
-
     void addReachableStates(const DFsm &dfsm, std::set<State> &reachable_states, const State from_state = 0)
     {
         if (from_state < dfsm.size())
@@ -828,7 +787,7 @@ private:
             {
                 for (const auto new_state : new_states)
                 {
-                    if (reachable_states.find(new_state) == reachable_states.end())
+                    if (reachable_states.count(new_state) == 0)
                     {
                         reachable_states.insert(new_state);
                         addReachableStates(dfsm, reachable_states, new_state);
