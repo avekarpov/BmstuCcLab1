@@ -453,16 +453,13 @@ private:
                     if (fsm.empty())
                     {
                         lexer.rollback();
-
-                        return fsm;
                     }
                     else
                     {
                         fsm.addRepeat();
-                        fsm &= parseSubregex(lexer);
-
-                        break;
                     }
+
+                    return fsm;
                 }
 
                 case '?':
@@ -470,16 +467,13 @@ private:
                     if (fsm.empty())
                     {
                         lexer.rollback();
-
-                        return fsm;
                     }
                     else
                     {
                         fsm.addOptional();   
-                        fsm &= parseSubregex(lexer);
-
-                        break;
                     }
+
+                    return fsm;
                 }
 
                 default:
