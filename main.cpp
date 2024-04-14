@@ -13,15 +13,19 @@ using State = size_t;
 using Term = char;
 static constexpr Term Eps { '\0' };
 
-using StateTranslations = std::map<Term, std::set<State>>;
-using FsmTranslations = std::vector<StateTranslations>;
+template <bool IsMulti>
+using StateTranslations = std::map<Term, std::conditional_t<IsMulti, std::set<State>, State>>;
 
+template <bool IsMulti>
+using FsmTranslations = std::vector<StateTranslations<IsMulti>>;
+
+template <bool IsMulti>
 class FsmBase
 {
 public:
     FsmBase() = default;
 
-    FsmBase(std::set<Term> terms, FsmTranslations translations)
+    FsmBase(std::set<Term> terms, FsmTranslations<IsMulti> translations)
     : _terms { std::move(terms) }
     , _translations { std::move(translations) }
     {}
@@ -31,7 +35,7 @@ public:
         return _terms;
     }
 
-    const FsmTranslations &translations() const
+    const FsmTranslations<IsMulti> &translations() const
     {
         return _translations;
     }
@@ -41,7 +45,7 @@ public:
         return _terms.empty();
     }
 
-    const StateTranslations &at(const State index) const
+    const StateTranslations<IsMulti> &at(const State index) const
     {
         if (size() <= index)
         {
@@ -58,10 +62,10 @@ public:
 
 protected:
     std::set<Term> _terms;
-    FsmTranslations _translations;
+    FsmTranslations<IsMulti> _translations;
 };
 
-class Fsm : public FsmBase
+class Fsm : public FsmBase<true>
 {
 public:
     Fsm ()
@@ -231,7 +235,7 @@ public:
     }
 
 private:
-    StateTranslations &operator[](const size_t index)
+    StateTranslations<true> &operator[](const size_t index)
     {
         return _translations[index];
     }
@@ -269,11 +273,11 @@ private:
     }
 };
 
-class DFsm : public FsmBase
+class DFsm : public FsmBase<false>
 {
 public:
-    DFsm(std::set<Term> terms, FsmTranslations translations, std::set<State> end_states)
-    : FsmBase { std::move(terms), std::move(translations) }
+    DFsm(std::set<Term> terms, FsmTranslations<false> translations, std::set<State> end_states)
+    : FsmBase<false> { std::move(terms), std::move(translations) }
     , _end_states { std::move(end_states) }
     {}
 
@@ -292,13 +296,9 @@ public:
         for (size_t i = 0; i < dfsm.size(); ++i)
         {
             os << i << ": [";
-            for (const auto &[key, new_states] : dfsm.at(i))
+            for (const auto &[key, new_state] : dfsm.at(i))
             {
-                os << key << ": ";
-                for (const auto new_state : new_states)
-                {
-                    os << new_state << ", ";
-                }
+                os << key << ": " << new_state << ", ";
             }
             os << "]\n";
         }
@@ -510,7 +510,7 @@ public:
     DFsm determine(const Fsm &fsm)
     {
         std::map<std::set<State>, State> mapping;
-        FsmTranslations translations;
+        FsmTranslations<false> translations;
         std::set<std::set<State>> queue;
 
         const auto start_state = epsClosure(fsm, 0);
@@ -540,7 +540,7 @@ public:
                     queue.insert(new_state);
                 }
 
-                translations[mapping[state]][term].insert(mapping[new_state]);
+                translations[mapping[state]][term] = mapping[new_state];
             }
         }
 
@@ -633,16 +633,13 @@ public:
         std::set<State> reachable_states { 0 };
         addReachableStates(dfsm, reachable_states);
 
-        FsmTranslations reverse_translations;
+        FsmTranslations<true> reverse_translations;
         reverse_translations.resize(dfsm.size() + 1);
         for (State state = 0; state < dfsm.size(); ++state)
         {
-            for (const auto [key, new_states] : dfsm.at(state))
+            for (const auto [key, new_state] : dfsm.at(state))
             {
-                for (const auto new_state : new_states)
-                {
-                    reverse_translations[new_state][key].insert(state);
-                }
+                reverse_translations[new_state][key].insert(state);
             }
         }
         for (State state = 0; state < dfsm.size(); ++state)
@@ -738,7 +735,7 @@ public:
         }
 
         std::map<State, State> mapping;
-        FsmTranslations translations;
+        FsmTranslations<false> translations;
         for (State state = 0; state < equal_states.size(); ++state)
         {
             if (not equal_states[state].has_value())
@@ -761,16 +758,12 @@ public:
                 end_states.insert(mapping[state]);
             }
 
-            for (const auto &[key, new_states] : dfsm.at(state))
+            for (const auto &[key, new_state] : dfsm.at(state))
             {
-                for (const auto new_state : new_states)
-                {
-                    translations[
-                        mapping[equal_states[state].has_value() ? equal_states[state].value() : state]
-                    ][key].insert(
-                        mapping[equal_states[new_state].has_value() ? equal_states[new_state].value() : new_state]
-                    );
-                }
+                translations[
+                    mapping[equal_states[state].has_value() ? equal_states[state].value() : state]
+                ][key] = 
+                    mapping[equal_states[new_state].has_value() ? equal_states[new_state].value() : new_state];
             }
         }
 
@@ -783,15 +776,12 @@ private:
         if (from_state < dfsm.size())
         {
             const auto &translations = dfsm.at(from_state);
-            for (const auto &[_, new_states] : translations)
+            for (const auto &[_, new_state] : translations)
             {
-                for (const auto new_state : new_states)
+                if (reachable_states.count(new_state) == 0)
                 {
-                    if (reachable_states.count(new_state) == 0)
-                    {
-                        reachable_states.insert(new_state);
-                        addReachableStates(dfsm, reachable_states, new_state);
-                    }
+                    reachable_states.insert(new_state);
+                    addReachableStates(dfsm, reachable_states, new_state);
                 }
             }
         }
@@ -801,8 +791,8 @@ private:
 int main(int argc, char *argv[])
 {
     // std::string input = "ac|b";
-    std::string input = "(a|b)*abb";
-    // std::string input = "z*|(qw)?";
+    // std::string input = "(a|b)*abb";
+    std::string input = "pq?wz*|(qw)?";
     // std::string input = "ab*cz*";
     // std::string input = "zq*";
     // std::string input = "(q)*";
