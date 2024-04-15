@@ -7,25 +7,26 @@
 #include <queue>
 #include <set>
 #include <map>
+#include <format>
 
 using State = size_t;
 
 using Term = char;
 static constexpr Term Eps { '\0' };
 
-template <bool IsMulti>
-using StateTranslations = std::map<Term, std::conditional_t<IsMulti, std::set<State>, State>>;
+template <bool is_multi>
+using StateTranslations = std::map<Term, std::conditional_t<is_multi, std::set<State>, State>>;
 
-template <bool IsMulti>
-using FsmTranslations = std::vector<StateTranslations<IsMulti>>;
+template <bool is_multi>
+using FsmTranslations = std::vector<StateTranslations<is_multi>>;
 
-template <bool IsMulti>
+template <bool is_multi>
 class FsmBase
 {
 public:
     FsmBase() = default;
 
-    FsmBase(std::set<Term> terms, FsmTranslations<IsMulti> translations)
+    FsmBase(std::set<Term> terms, FsmTranslations<is_multi> translations)
     : _terms { std::move(terms) }
     , _translations { std::move(translations) }
     {}
@@ -35,7 +36,7 @@ public:
         return _terms;
     }
 
-    const FsmTranslations<IsMulti> &translations() const
+    const FsmTranslations<is_multi> &translations() const
     {
         return _translations;
     }
@@ -45,7 +46,7 @@ public:
         return _terms.empty();
     }
 
-    const StateTranslations<IsMulti> &at(const State index) const
+    const StateTranslations<is_multi> &at(const State index) const
     {
         if (size() <= index)
         {
@@ -62,7 +63,7 @@ public:
 
 protected:
     std::set<Term> _terms;
-    FsmTranslations<IsMulti> _translations;
+    FsmTranslations<is_multi> _translations;
 };
 
 class Fsm : public FsmBase<true>
@@ -234,6 +235,47 @@ public:
         return os;
     }
 
+    std::string toGraphviz() const
+    {
+        const auto translations = [this]()
+        {
+            std::string result;
+
+            for (State state = 0; state < size(); ++state)
+            {
+                for (const auto &[key, new_states] : _translations[state])
+                {
+                    for (const auto new_state : new_states)
+                    {
+                        std::format_to(
+                            std::back_inserter(result), 
+                            R"({} -> {} [label = "{}"];)", 
+                            state, 
+                            new_state, 
+                            (key == Eps ? "ε" : std::string { key })
+                        );
+                    }
+                }
+            }
+
+            return result;
+        };
+
+        return std::format(
+            R"(
+                digraph G {{
+                    rankdir = "LR"
+                    {{
+                        {} [shape=doublecircle]
+                    }}
+                    {}
+                }}
+            )",
+            endState(),
+            translations()
+        );
+    }
+
 private:
     StateTranslations<true> &operator[](const size_t index)
     {
@@ -309,6 +351,60 @@ public:
         }
 
         return os;
+    }
+
+    std::string toGraphviz() const
+    {
+        const auto endStates = [this]()
+        {
+            std::string result;
+
+            for (const auto &end_state : _end_states)
+            {
+                std::format_to(
+                    std::back_inserter(result),
+                    R"({} [shape=doublecircle];)",
+                    end_state
+                );
+            };
+
+            return result;
+        };
+
+        const auto translations = [this]()
+        {
+            std::string result;
+
+            for (State state = 0; state < size(); ++state)
+            {
+                for (const auto &[key, new_state] : _translations[state])
+                {
+                    std::format_to(
+                        std::back_inserter(result), 
+                        R"({} -> {} [label = "{}"];)", 
+                        state, 
+                        new_state, 
+                        (key == Eps ? "ε" : std::string { key })
+                    );
+                }
+            }
+
+            return result;
+        };
+
+        return std::format(
+            R"(
+                digraph G {{
+                    rankdir = "LR"
+                    {{
+                        {}
+                    }}
+                    {}
+                }}
+            )",
+            endStates(),
+            translations()
+        );
     }
 
 private:
@@ -777,33 +873,31 @@ private:
     }
 };
 
+template <class T>
+void graphviz(const T &fsm, std::string name)
+{
+    std::system(std::format(R"(echo '{}' | dot -Tsvg > {}.svg && open -a "Google Chrome" ./{}.svg)", fsm.toGraphviz(), name, name).data());
+}
+
 int main(int argc, char *argv[])
 {
-    // std::string input = "ac|b";
-    // std::string input = "(a|b)*abb";
-    std::string input = "pq?wz*|(qw)?";
-    // std::string input = "ab*cz*";
-    // std::string input = "zq*";
-    // std::string input = "(q)*";
-    // std::string input = "(a|b)q";
-    // std::string input = "(z|p)q|(v|m)t";
-    // std::string input = "b|u|w";
-    std::cout << input << std::endl;
-
-    // std::string input;
+    std::string input = "(a|b)*abb";
     // std::cin >> input;
 
     RegexParser parser;
     const auto nfsm = parser.parseToFsm(input);
-    std::cout << nfsm << "\n" << std::endl;
+    std::cout << nfsm << std::endl;
+    graphviz(nfsm, "nfsm");
 
     FsmDeterminizer determinizer;
     const auto dfsm = determinizer.determine(nfsm);
-    std::cout << dfsm << "\n" << std::endl;
+    std::cout << dfsm << std::endl;
+    graphviz(dfsm, "dfsm");
 
     DFsmMinimizer minimizer;
     const auto mdfsm = minimizer.minimize(dfsm);
     std::cout << mdfsm << std::endl;
+    graphviz(mdfsm, "mdfsm");
 
     return EXIT_SUCCESS;
 }
