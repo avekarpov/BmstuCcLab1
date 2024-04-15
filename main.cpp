@@ -674,10 +674,10 @@ public:
         }
         for (State state = 0; state < dfsm.size(); ++state)
         {
-            if (true != dfsm.isEndState(state))
+            if (dfsm.isEndState(state))
             {
                 marked[state][dfsm.size()] = marked[dfsm.size()][state] =  true;
-                queue.emplace_back(dfsm.size(), state);
+                queue.emplace_back(state, dfsm.size());
             }
         }
         marked[dfsm.size()][dfsm.size()] = false;
@@ -698,11 +698,6 @@ public:
                             queue.emplace_back(l_prev_state, r_prev_state);
                         }
                     }
-                }
-
-                if (reverse_translations[l_state][term].empty() != reverse_translations[r_state][term].empty())
-                {
-                    
                 }
             }
 
