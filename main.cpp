@@ -293,15 +293,12 @@ private:
             _translations[i] = std::move(_translations[i - index]);
             for (auto &[_, new_states] : _translations[i])
             {
+                std::set<State> states;
                 for (auto &new_state : new_states)
                 {
-                    std::set<State> states;
-                    for (auto &new_state : new_states)
-                    {
-                        states.insert(new_state + index);
-                    }
-                    new_states = states;
+                    states.insert(new_state + index);
                 }
+                new_states = states;
             }
         }
     }
@@ -422,34 +419,24 @@ private:
         , _string { std::move(string) }
         {}
 
-        char get() const
+        char peek() const
         {
             if (isEnd())
             {
-                throw std::runtime_error { "Call get on end of string" };
+                throw std::runtime_error { "Call peek on end of string" };
             }
 
             return _string[_index];
         }
 
-        void next()
+        void pop()
         {
             if (isEnd())
             {
-                throw std::runtime_error { "Call next on end of string" };
+                throw std::runtime_error { "Call pop on end of string" };
             }
 
             ++_index;
-        }
-
-        void rollback()
-        {
-            if (_index == 0)
-            {
-                throw std::runtime_error { "Call rollback on start of string" };
-            }
-
-            --_index;
         }
 
         bool isEnd() const
@@ -463,133 +450,196 @@ private:
         const std::string _string;
     };
 
-public:
-    Fsm parseToFsm(std::string regex)
+    struct AstNode
     {
-        Lexer lexer { std::move(regex) };
+        using Ptr = std::shared_ptr<AstNode>;
 
-        return parseSubregex(lexer);
+        AstNode(Term term, Ptr l, Ptr r)
+        : term { term }
+        , left { l }
+        , right { r }
+        {}
+
+        Term term;
+        Ptr left;
+        Ptr right;
+    };
+    using AstNodePtr = AstNode::Ptr;
+
+    class Ast
+    {
+    public:
+        Ast(const std::string &string)
+        {
+            Lexer lexer { prepare(string) };
+
+            _root = parseSubregex(lexer);
+        }
+
+        const AstNodePtr root() const
+        {
+            return _root;
+        }
+
+    private:
+        static std::string prepare(const std::string string)
+        {
+            std::string result;
+            result.reserve(string.size() * 2);
+
+            for (size_t i = 0; i < string.size() - 1; ++i)
+            {
+                const auto c = string[i];
+                const auto n = string[i + 1];
+
+                result.push_back(c);
+                if (
+                    (std::isalnum(c) || c == ')' || c == '*' || c == '?') &&
+                    (n != ')' && n != '|' && n != '*' && n != '?')
+                )
+                {
+                    result.push_back('&');
+                }
+            }
+            {
+                result.push_back(string.back());
+            }
+
+            return result;
+        }
+
+        AstNodePtr parseSubregex(Lexer &lexer)
+        {
+            AstNodePtr left = parseConcatination(lexer);
+
+            if (not lexer.isEnd() && lexer.peek() == '|')
+            {
+                lexer.pop();
+
+                return std::make_shared<AstNode>('|', left, parseSubregex(lexer));
+            }
+            else
+            {
+                return left;
+            }
+        }
+
+        AstNodePtr parseConcatination(Lexer &lexer)
+        {
+            AstNodePtr left = parseRepeat(lexer);
+
+            if (not lexer.isEnd() && lexer.peek() == '&')
+            {
+                lexer.pop();
+
+                return std::make_shared<AstNode>('&', left, parseConcatination(lexer));
+            }
+            else
+            {
+                return left;
+            }
+        }
+
+        AstNodePtr parseRepeat(Lexer &lexer)
+        {
+            AstNodePtr left = parseAtom(lexer);
+
+            if (not lexer.isEnd() && lexer.peek() == '*')
+            {
+                lexer.pop();
+
+                return std::make_shared<AstNode>('*', left, nullptr);
+            }
+            else if (not lexer.isEnd() && lexer.peek() == '?')
+            {
+                lexer.pop();
+
+                return std::make_shared<AstNode>('?', left, nullptr);
+            }
+            else
+            {
+                return left;
+            }
+        }
+
+        AstNodePtr parseAtom(Lexer &lexer)
+        {
+            AstNodePtr node;
+
+            if (not lexer.isEnd() && lexer.peek() == '(')
+            {
+                lexer.pop();
+
+                node = parseSubregex(lexer);
+
+                const auto c = lexer.peek();
+                
+                if (c != ')')
+                {
+                    throw std::invalid_argument { std::format(R"(got {}, expect ')')", c) };
+                }
+
+                lexer.pop();
+            }
+            else if (not lexer.isEnd())
+            {
+                const auto c = lexer.peek();
+
+                if (not std::isalnum(c))
+                {
+                    throw std::invalid_argument { std::format(R"(got {}, expect char or digit)", c) };
+                }
+
+                lexer.pop();
+
+                node = std::make_shared<AstNode>(c, nullptr, nullptr);
+            }
+
+            return node;
+        }
+
+    private:
+        AstNodePtr _root;
+    };
+
+public:
+    Fsm parseToFsm(const std::string& string) const
+    {
+        Ast ast { string };
+        
+        return parseAstNode(ast.root());
     }
 
 private:
-    bool isSingle(char c)
+    Fsm parseAstNode(const AstNodePtr node) const
     {
-        switch (c)
+        switch (node->term)
         {
+            case '|':
+            {
+                return parseAstNode(node->left) | parseAstNode(node->right);
+            }
+
+            case '&':
+            {
+                return parseAstNode(node->left) & parseAstNode(node->right);
+            }
+
             case '*':
+            {
+                return parseAstNode(node->left).addRepeat();
+            }
+
             case '?':
             {
-                return true;
+                return parseAstNode(node->left).addOptional();
             }
 
-            case '(':
-            case ')':
-            case '|':
             default:
             {
-                return false;
+                return Fsm { node->term };
             }
         }
-    }
-
-    Fsm parseSubregex(Lexer &lexer)
-    {
-        Fsm fsm;
-
-        while (not lexer.isEnd())
-        {
-            const auto term = lexer.get();
-            lexer.next();
-
-            switch (term)
-            {
-                case '(':
-                {
-                    if (not fsm.empty())
-                    {
-                        lexer.rollback();
-                        fsm &= parseSubregex(lexer);
-                    }
-                    else
-                    {
-                        fsm = parseSubregex(lexer).addBrackets();
-
-                        assert(lexer.get() == ')');
-                        lexer.next();
-                    }
-
-                    break;
-                }
-
-                case ')':
-                {
-                    lexer.rollback();
-
-                    return fsm;
-                }
-
-                case '|':
-                {
-                    if (fsm.empty())
-                    {
-                        lexer.rollback();
-
-                        return fsm;
-                    }
-                    else
-                    {
-                        fsm |= parseSubregex(lexer);
-
-                        break;
-                    }
-                }
-
-                case '*':
-                {
-                    if (fsm.empty())
-                    {
-                        lexer.rollback();
-                    }
-                    else
-                    {
-                        fsm.addRepeat();
-                    }
-
-                    return fsm;
-                }
-
-                case '?':
-                {
-                    if (fsm.empty())
-                    {
-                        lexer.rollback();
-                    }
-                    else
-                    {
-                        fsm.addOptional();   
-                    }
-
-                    return fsm;
-                }
-
-                default:
-                {
-                    if (not fsm.empty() && not lexer.isEnd() && isSingle(lexer.get()))
-                    {
-                        lexer.rollback();
-                        fsm &= parseSubregex(lexer);
-                    }
-                    else
-                    {
-                        fsm &= Fsm { term };
-                    }
-
-                    break;
-                }
-            }
-        }
-
-        return fsm;
     }
 
 };
@@ -603,7 +653,8 @@ public:
         FsmTranslations<false> translations;
         std::set<std::set<State>> queue;
 
-        const auto start_state = epsClosure(fsm, 0);
+        std::set<State> start_state;
+        addEpsClosure(fsm, start_state, 0);
 
         mapping[start_state] = translations.size();
         translations.emplace_back();
@@ -647,9 +698,9 @@ public:
     }
 
 private:
-    std::set<State> singleEpsClosure(const Fsm &fsm, const State input_state)
+    void addEpsClosure(const Fsm &fsm, std::set<State> &closure, const State input_state)
     {
-        std::set<State> result;
+        closure.insert(input_state);
 
         if (input_state != fsm.endState())
         {
@@ -657,38 +708,28 @@ private:
             {
                 if (key == Eps)
                 {
-                    result.insert(new_states.begin(), new_states.end());
+                    for (const auto new_state : new_states)
+                    {
+                        if (closure.count(new_state) == 0)
+                        {
+                            addEpsClosure(fsm, closure, new_state);
+                        }
+                    }
                 }
             }
         }
-
-        return result;
     }
 
     std::set<State> epsClosure(const Fsm &fsm, const std::set<State> &input_states)
     {
-        std::set<State> result { input_states.begin(), input_states.end() };
+        std::set<State> clouser { input_states.begin(), input_states.end() };
 
         for (const auto state : input_states)
         {
-            const auto result_size_before = result.size();
-
-            auto new_states = singleEpsClosure(fsm, state);
-            result.insert(new_states.begin(), new_states.end());
-            
-            if (result_size_before < result.size())
-            {
-                new_states = epsClosure(fsm, new_states);
-                result.insert(new_states.begin(), new_states.end());
-            }
+            addEpsClosure(fsm, clouser, state);
         }
 
-        return result;
-    }
-
-    std::set<State> epsClosure(const Fsm &fsm, const State input_state)
-    {
-        return epsClosure(fsm, std::set<State> { input_state });
+        return clouser;
     }
 
     std::set<State> move(const Fsm &fsm, const std::set<State> &input_states, const Term term)
@@ -720,7 +761,7 @@ class DFsmMinimizer
 public:
     DFsm minimize(const DFsm &dfsm)
     {
-        std::set<State> reachable_states { 0 };
+        std::set<State> reachable_states;
         addReachableStates(dfsm, reachable_states);
 
         FsmTranslations<true> reverse_translations;
@@ -858,6 +899,8 @@ public:
 private:
     void addReachableStates(const DFsm &dfsm, std::set<State> &reachable_states, const State from_state = 0)
     {
+        reachable_states.insert(from_state);
+
         if (from_state < dfsm.size())
         {
             const auto &translations = dfsm.at(from_state);
@@ -865,7 +908,6 @@ private:
             {
                 if (reachable_states.count(new_state) == 0)
                 {
-                    reachable_states.insert(new_state);
                     addReachableStates(dfsm, reachable_states, new_state);
                 }
             }
@@ -881,8 +923,8 @@ void graphviz(const T &fsm, std::string name)
 
 int main(int argc, char *argv[])
 {
-    std::string input = "(a|b)*abb";
-    // std::cin >> input;
+    std::string input;
+    std::cin >> input;
 
     RegexParser parser;
     const auto nfsm = parser.parseToFsm(input);
