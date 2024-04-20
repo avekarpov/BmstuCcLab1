@@ -350,6 +350,24 @@ public:
         return os;
     }
 
+    bool isValid(const std::string &string) const
+    {
+        State state = 0;
+        for (const auto c : string)
+        {
+            if (const auto it = _translations[state].find(c); it != _translations[state].end())
+            {
+                state = it->second;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        return _end_states.count(state) != 0;
+    }
+
     std::string toGraphviz() const
     {
         const auto endStates = [this]()
@@ -940,6 +958,12 @@ int main(int argc, char *argv[])
     const auto mdfsm = minimizer.minimize(dfsm);
     std::cout << mdfsm << std::endl;
     graphviz(mdfsm, "mdfsm");
+
+    while (true)
+    {
+        std::cin >> input;
+        std::cout << (mdfsm.isValid(input) ? "Ok" : "Failed") << std::endl;
+    }
 
     return EXIT_SUCCESS;
 }
